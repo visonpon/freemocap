@@ -46,5 +46,5 @@ class VideoWriterTestCase(TestCase):
         vw.save(save_options)
         expected_path = Path().joinpath(file_path, "movie.mp4")
 
-        assert save_options.full_path == expected_path, "Paths do not match"
+        assert save_options.full_path_video == expected_path, "Paths do not match"
         assert os.path.exists(expected_path), "File does not exist"

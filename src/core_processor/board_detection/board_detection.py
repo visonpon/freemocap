@@ -56,8 +56,9 @@ class BoardDetection:
                     writer_dir=Path().joinpath(
                         cv_cam.session_writer_base_path,
                         "board_detection",
-                        f"webcam_{cv_cam.webcam_id_as_str}",
                     ),
+                    video_filename=f"{cv_cam.webcam_id_as_str}_video.mp4",
+                    timestamp_filename=f"{cv_cam.webcam_id_as_str}_timestamp.npy",
                     fps=fps_manager.current_fps_for(cv_cam.webcam_id_as_str),
                     frame_width=cv_cam.get_frame_width(),
                     frame_height=cv_cam.get_frame_height(),
@@ -106,8 +107,9 @@ class BoardDetection:
                         writer_dir=Path().joinpath(
                             cv_cam.session_writer_base_path,
                             "board_detection",
-                            f"webcam_{cv_cam.webcam_id_as_str}",
                         ),
+                        video_filename=f"{cv_cam.webcam_id_as_str}_video.mp4",
+                        timestamp_filename=f"{cv_cam.webcam_id_as_str}_timestamp.npy",
                         fps=fps_manager.current_fps_for(cv_cam.webcam_id_as_str),
                         frame_width=cv_cam.get_frame_width(),
                         frame_height=cv_cam.get_frame_height(),

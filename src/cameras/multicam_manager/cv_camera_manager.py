@@ -1,6 +1,7 @@
 import logging
 import traceback
 from contextlib import contextmanager
+from datetime import datetime
 from typing import ContextManager, Dict, List
 
 from pydantic import BaseModel
@@ -9,6 +10,7 @@ from src.api.services.user_config import UserConfigService
 from src.cameras.detection.cam_singleton import get_or_create_cams
 from src.cameras.capture.opencv_camera.opencv_camera import OpenCVCamera
 from src.cameras.persistence.video_writer.video_writer import VideoWriter
+from src.utils.time_str import get_canonical_time_str
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +29,7 @@ class CVCameraManager:
     def __init__(self):
         self._config_service = UserConfigService()
         self._detected_cams_data = get_or_create_cams()
+        self._session_active_time: datetime = None
         global _cv_cams
         if _cv_cams is None:
             logger.info("Creating cams.")
@@ -68,7 +71,8 @@ class CVCameraManager:
         Can capture frames from a single webcam or all webcams detected.
         """
         try:
-            writer = self._start_frame_capture_on_cam_id(webcam_id)
+            session_start_time = get_canonical_time_str()
+            writer = self._start_frame_capture_on_cam_id(webcam_id, session_start_time)
             cv_cam = self.cv_cam_by_id(webcam_id)
             yield CamAndWriterResponse(cv_cam=cv_cam, writer=writer)
             self._stop_frame_capture_all_cams()
@@ -81,7 +85,8 @@ class CVCameraManager:
         self,
     ) -> ContextManager[List[CamAndWriterResponse]]:
         try:
-            writer_dict = self._start_frame_capture_all_cams()
+            session_start_time = get_canonical_time_str()
+            writer_dict = self._start_frame_capture_all_cams(session_start_time)
             responses = [
                 CamAndWriterResponse(cv_cam=self.cv_cam_by_id(webcam_id), writer=writer)
                 for webcam_id, writer in writer_dict.items()
@@ -92,16 +97,20 @@ class CVCameraManager:
             logger.error("Printing traceback from starting capture session by cam")
             traceback.print_exc()
 
-    def _start_frame_capture_all_cams(self) -> Dict[str, VideoWriter]:
+    def _start_frame_capture_all_cams(
+        self, session_start_time: str
+    ) -> Dict[str, VideoWriter]:
         d = {}
         for cv_cam in self._cv_cams:
             cv_cam.connect()
-            cv_cam.start_frame_capture()
+            cv_cam.start_frame_capture(session_start_time)
             d[cv_cam.webcam_id_as_str] = VideoWriter()
 
         return d
 
-    def _start_frame_capture_on_cam_id(self, webcam_id: str) -> VideoWriter:
+    def _start_frame_capture_on_cam_id(
+        self, webcam_id: str, session_start_time: str
+    ) -> VideoWriter:
         filtered_cams = list(
             filter(lambda c: c.webcam_id_as_str == str(webcam_id), self._cv_cams)
         )
@@ -110,7 +119,7 @@ class CVCameraManager:
         ), "The CV Cams list should only have 1 cam per webcam_id"
         cv_cam = filtered_cams[0]
         cv_cam.connect()
-        cv_cam.start_frame_capture()
+        cv_cam.start_frame_capture(session_start_time)
         return VideoWriter()
 
     def _stop_frame_capture_all_cams(self):

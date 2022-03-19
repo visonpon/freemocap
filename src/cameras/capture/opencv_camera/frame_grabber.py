@@ -8,7 +8,6 @@ from uuid import uuid4
 from src.cameras.capture.frame_payload import FramePayload
 from src.cameras.persistence.video_writer.save_options import SaveOptions
 from src.cameras.persistence.video_writer.video_writer import VideoWriter
-from src.utils.time_str import get_canonical_time_str
 from src.config.data_paths import freemocap_data_path
 
 logger = logging.getLogger(__name__)
@@ -21,6 +20,7 @@ class FrameThread(threading.Thread):
         get_next_frame,
         frame_width: int,
         frame_height: int,
+        session_start_time: str,
         save_video=False,
     ):
         super().__init__()
@@ -34,7 +34,7 @@ class FrameThread(threading.Thread):
         self._elapsed = 0
         self._frame: FramePayload = FramePayload()
         self._session_id = uuid4()
-        self._session_timestr = get_canonical_time_str()
+        self._session_timestr = session_start_time
         self.setDaemon(True)
 
     @property
@@ -87,8 +87,9 @@ class FrameThread(threading.Thread):
                 writer_dir=Path().joinpath(
                     self.session_writer_path,
                     "raw_frame_capture",
-                    f"webcam_{self._webcam_id}",
                 ),
+                video_filename=f"{self._webcam_id}_video.mp4",
+                timestamp_filename=f"{self._webcam_id}_timestamps.npy",
                 fps=self.current_fps,
                 frame_width=self._frame_width,
                 frame_height=self._frame_height,
