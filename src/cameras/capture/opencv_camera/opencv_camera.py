@@ -4,6 +4,7 @@ import time
 import traceback
 from multiprocessing import Process
 from multiprocessing.connection import Pipe
+from pathlib import Path
 from threading import Thread
 from typing import Optional
 
@@ -22,17 +23,19 @@ class CamProcessHandler:
         self.image_reader, self.image_writer = Pipe()
         self.fps_reader, self.fps_writer = Pipe()
 
-    def _start(self, iw, fps):
+    def _start(self, session_path: Path, iw, fps):
         fc = FrameCapture(
             config=self._config,
             image_writer=iw,
             fps_writer=fps,
         )
-        fc.run()
+        fc.run(session_path)
 
-    def start_frame_capture(self, join=False):
+    def start_frame_capture(self, session_path: Path, join=False):
         self._process = Process(
-            target=self._start, args=(self.image_writer, self.fps_writer), daemon=True
+            target=self._start,
+            args=(session_path, self.image_writer, self.fps_writer),
+            daemon=True,
         )
         self._process.start()
         if join:
@@ -67,17 +70,16 @@ class CamThreadHandler:
     def __init__(self, config: WebcamConfig):
         self._config = config
         self.is_capturing_frames = (False,)
-        self._thread: threading.Thread = None
+        self._thread: Optional[threading.Thread] = None
         c = VideoCaptureFactory()
         self._video_capture = c.create(WebcamConfig(webcam_id=self._config.webcam_id))
         self._fc = FrameCapture(
             video_capture=self._video_capture,
-            save_video=config.save_video,
-            webcam_id=config.webcam_id,
+            config=config,
         )
 
-    def start_frame_capture(self, join=False):
-        self._thread = Thread(target=self._fc.run, daemon=True)
+    def start_frame_capture(self, session_path: Path, join=False):
+        self._thread = Thread(target=self._fc.run, args=(session_path,), daemon=True)
         self._thread.start()
         self.is_capturing_frames = True
         if join:
@@ -154,7 +156,7 @@ class OpenCVCamera:
     def session_writer_base_path(self):
         return ""
 
-    def start_frame_capture(self):
+    def start_frame_capture(self, session_path: Path):
         if self.is_capturing_frames:
             logger.debug(
                 f"Already capturing frames for webcam_id: {self.webcam_id_as_str}"
@@ -163,7 +165,7 @@ class OpenCVCamera:
         logger.info(
             f"Beginning frame capture thread for webcam: {self.webcam_id_as_str}"
         )
-        self._capture_handler.start_frame_capture()
+        self._capture_handler.start_frame_capture(session_path=session_path)
 
     def stop_frame_capture(self):
         self.close()

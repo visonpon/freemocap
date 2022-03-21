@@ -1,4 +1,6 @@
 import logging
+import multiprocessing
+import platform
 import time
 import traceback
 from dataclasses import dataclass
@@ -12,7 +14,10 @@ import numpy as np
 from src.cameras.capture.frame_payload import FramePayload
 from src.cameras.multicam_manager.cv_camera_manager import CVCameraManager
 from src.cameras.persistence.video_writer.video_writer import SaveOptions
-from src.core_processor.board_detection.base_pose_estimation import detect_charuco_board, CharucoData
+from src.core_processor.board_detection.base_pose_estimation import (
+    detect_charuco_board,
+    CharucoData,
+)
 from src.core_processor.board_detection.charuco_image_annotator import (
     annotate_image_with_charuco_data,
 )
@@ -22,15 +27,16 @@ from src.core_processor.utils.image_fps_writer import write_fps_to_image
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class CharucoFramePayload:
     raw_frame_payload: FramePayload
     annotated_frame_payload: FramePayload
     charuco_data: CharucoData
 
+
 class BoardDetection:
     def __init__(self, cam_manager: CVCameraManager = CVCameraManager()):
-        print('pre-henlo')
         self._cam_manager = cam_manager
 
     async def process_by_cam_id(self, webcam_id: str, cb):
@@ -38,7 +44,6 @@ class BoardDetection:
             webcam_id=webcam_id,
         ) as session_obj:
             fps_manager = FPSCamCounter(self._cam_manager.available_webcam_ids)
-            fps_manager.start_all()
             cv_cam = session_obj.cv_cam
             writer = session_obj.writer
             try:
@@ -46,7 +51,11 @@ class BoardDetection:
                     if not cv_cam.is_capturing_frames:
                         return
                     charuco_frame_payload = self._detect_charuco_board_in_image(cv_cam)
-                    if cb and charuco_frame_payload.annotated_frame_payload.image is not None:
+                    if (
+                        cb
+                        and charuco_frame_payload.annotated_frame_payload.image
+                        is not None
+                    ):
                         writer.write(charuco_frame_payload.annotated_frame_payload)
                         await cb(charuco_frame_payload.annotated_frame_payload.image)
             except Exception as e:
@@ -68,24 +77,27 @@ class BoardDetection:
                 writer.save(options)
 
     def process(
-        self, post_processed_frame_cb:Callable[[str, CharucoFramePayload], None]=None, show_window=True, save_video=True,
+        self,
+        post_processed_frame_cb: Callable[[str, CharucoFramePayload], None] = None,
+        show_window=True,
+        save_video=True,
     ):
         """
         Opens Camera using OpenCV and begins image processing for charuco board
         If return images is true, the images are returned to the caller
         """
         # if its already capturing frames, this is a no-op
-
         with self._cam_manager.start_capture_session_all_cams() as session_obj:
             fps_manager = FPSCamCounter(self._cam_manager.available_webcam_ids)
-            fps_manager.start_all()
             try:
                 should_continue = True
                 while should_continue:
                     for response in session_obj:
                         cv_cam = response.cv_cam
                         writer = response.writer
-                        charuco_frame_payload = self._detect_charuco_board_in_image(cv_cam)
+                        charuco_frame_payload = self._detect_charuco_board_in_image(
+                            cv_cam
+                        )
                         current_webcam_id = cv_cam.webcam_id_as_str
 
                         if not charuco_frame_payload:
@@ -95,12 +107,19 @@ class BoardDetection:
                             writer.write(charuco_frame_payload.annotated_frame_payload)
 
                         if post_processed_frame_cb:
-                            post_processed_frame_cb(current_webcam_id, charuco_frame_payload)
+                            post_processed_frame_cb(
+                                current_webcam_id, charuco_frame_payload
+                            )
 
-                        fps_manager.increment_frame_processed_for(current_webcam_id)
+                        fps_manager.increment_for(
+                            current_webcam_id,
+                            charuco_frame_payload.annotated_frame_payload,
+                        )
                         if show_window:
                             should_continue = show_cam_window(
-                                current_webcam_id, charuco_frame_payload.annotated_frame_payload.image, fps_manager
+                                current_webcam_id,
+                                charuco_frame_payload.annotated_frame_payload.image,
+                                fps_manager,
                             )
             except:
                 logger.error("Printing traceback")
@@ -125,6 +144,9 @@ class BoardDetection:
                     cv2.waitKey(1)
 
     def _detect_charuco_board_in_image(self, cv_cam):
+        if cv_cam.latest_frame is None:
+            return
+
         raw_frame_payload = cv_cam.latest_frame
 
         if not raw_frame_payload.success:
@@ -140,16 +162,26 @@ class BoardDetection:
         success_bool = annotate_image_with_charuco_data(
             annotated_image, cv_cam.webcam_id_as_str, charuco_data
         )
-        cv2.polylines(annotated_image, np.int32([charuco_data.charuco_corners]), True, (0, 100, 255), 2)
+        cv2.polylines(
+            annotated_image,
+            np.int32([charuco_data.charuco_corners]),
+            True,
+            (0, 100, 255),
+            2,
+        )
 
         return CharucoFramePayload(
-            annotated_frame_payload=FramePayload(image=annotated_image, timestamp=time.time_ns()),
+            annotated_frame_payload=FramePayload(
+                image=annotated_image, timestamp=time.time_ns()
+            ),
             raw_frame_payload=raw_frame_payload,
-            charuco_data=charuco_data
+            charuco_data=charuco_data,
         )
 
 
 if __name__ == "__main__":
     ## Jon, Run me to easily start a charuco board detect run
-    print('starting main')
+    print("starting main")
+    if platform.system() == "Darwin":
+        multiprocessing.set_start_method("spawn")
     BoardDetection().process()

@@ -1,7 +1,9 @@
 import logging
 import traceback
 from contextlib import contextmanager
+from pathlib import Path
 from typing import ContextManager, Dict, List
+from uuid import uuid4
 
 from pydantic import BaseModel
 
@@ -9,6 +11,8 @@ from src.api.services.user_config import UserConfigService
 from src.cameras.detection.cam_singleton import get_or_create_cams
 from src.cameras.capture.opencv_camera.opencv_camera import OpenCVCamera
 from src.cameras.persistence.video_writer.video_writer import VideoWriter
+from src.config.data_paths import freemocap_data_path
+from src.utils.time_str import create_session_path, get_canonical_time_str
 
 logger = logging.getLogger(__name__)
 
@@ -94,8 +98,11 @@ class CVCameraManager:
 
     def _start_frame_capture_all_cams(self) -> Dict[str, VideoWriter]:
         d = {}
+        session_id = uuid4()
+        session_timestr = get_canonical_time_str()
+        p = Path().joinpath(freemocap_data_path, f"{session_id}_{session_timestr}")
         for cv_cam in self._cv_cams:
-            cv_cam.start_frame_capture()
+            cv_cam.start_frame_capture(session_path=p)
             d[cv_cam.webcam_id_as_str] = VideoWriter()
 
         return d
@@ -107,8 +114,9 @@ class CVCameraManager:
         assert (
             len(filtered_cams) == 1
         ), "The CV Cams list should only have 1 cam per webcam_id"
+        p = create_session_path()
         cv_cam = filtered_cams[0]
-        cv_cam.start_frame_capture()
+        cv_cam.start_frame_capture(p)
         return VideoWriter()
 
     def _stop_frame_capture_all_cams(self):

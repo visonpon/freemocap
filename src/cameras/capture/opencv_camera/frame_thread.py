@@ -1,9 +1,7 @@
 import logging
-import time
 import traceback
 from multiprocessing.connection import Connection
 from pathlib import Path
-from uuid import uuid4
 
 import cv2
 
@@ -14,7 +12,6 @@ from src.cameras.capture.opencv_camera.webcam_connect import VideoCaptureFactory
 from src.cameras.persistence.video_writer.save_options import SaveOptions
 from src.cameras.persistence.video_writer.video_writer import VideoWriter
 from src.core_processor.fps.fps_counter import FPSCounter
-from src.utils.time_str import get_canonical_time_str
 
 logger = logging.getLogger(__name__)
 
@@ -36,14 +33,16 @@ class FrameCapture:
         self._num_frames_processed = 0
         self._elapsed = 0
         self._frame: FramePayload = FramePayload()
-        self._session_id = uuid4()
-        self._session_timestr = get_canonical_time_str()
         self._image_writer = image_writer
         c = VideoCaptureFactory()
         self._video_capture = c.create(self._config)
         self.session_writer_path = session_writer_path
         self._fps_counter = FPSCounter()
         self._fps_writer = fps_writer
+
+    @property
+    def current_fps(self):
+        return self._fps_counter.current_fps
 
     @property
     def frame_width(self):
@@ -68,10 +67,10 @@ class FrameCapture:
         self._is_capturing_frames = False
         self._video_capture.release()
 
-    def run(self):
-        self._start_frame_loop()
+    def run(self, session_path: Path):
+        self._start_frame_loop(session_path)
 
-    def _start_frame_loop(self):
+    def _start_frame_loop(self, session_path: Path):
         video_writer = VideoWriter()
         self._is_capturing_frames = True
 
@@ -81,7 +80,7 @@ class FrameCapture:
                 self._fps_counter.increment(frame)
                 self._frame = frame
                 if self._image_writer:
-                    self._image_writer.send(frame.image)
+                    self._image_writer.send(frame)
                 if self._fps_writer:
                     self._fps_writer.send(self._fps_counter.current_fps)
                 if self._config.save_video:
@@ -96,12 +95,11 @@ class FrameCapture:
                 return
             options = SaveOptions(
                 writer_dir=Path().joinpath(
-                    self.session_writer_path,
+                    session_path,
                     "raw_frame_capture",
                     f"webcam_{self._webcam_id}",
                 ),
                 fps=self._fps_counter.current_fps,
-                # fps=float(self._video_capture.get(5)),
                 frame_width=self.frame_width,
                 frame_height=self.frame_height,
             )

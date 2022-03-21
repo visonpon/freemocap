@@ -35,7 +35,7 @@ class FPSCamCounter:
 
         return d
 
-    def increment_frame_processed_for(self, webcam_id, frame: FramePayload):
+    def increment_for(self, webcam_id, frame: FramePayload):
         self._counters[webcam_id].increment(frame)
 
     def current_fps_for(self, webcam_id):
