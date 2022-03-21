@@ -1,43 +1,130 @@
 import logging
-import platform
+import threading
 import time
 import traceback
-from pathlib import Path
+from multiprocessing import Process
+from multiprocessing.connection import Pipe
+from threading import Thread
+from typing import Optional
 
-import cv2
-from pydantic import BaseModel
-
-from src.cameras.capture.frame_payload import FramePayload
-from src.cameras.capture.opencv_camera.frame_grabber import FrameThread
+from src.cameras.capture.opencv_camera.frame_thread import FrameCapture
+from src.cameras.capture.opencv_camera.webcam_config import WebcamConfig
+from src.cameras.capture.opencv_camera.webcam_connect import VideoCaptureFactory
 
 logger = logging.getLogger(__name__)
 
 
-def _get_home_dir():
-    return str(Path.home())
+class CamProcessHandler:
+    def __init__(self, config: WebcamConfig):
+        self.is_capturing_frames = False
+        self._config = config
+        self._process: Optional[Process] = None
+        self.image_reader, self.image_writer = Pipe()
+        self.fps_reader, self.fps_writer = Pipe()
+
+    def _start(self, iw, fps):
+        fc = FrameCapture(
+            config=self._config,
+            image_writer=iw,
+            fps_writer=fps,
+        )
+        fc.run()
+
+    def start_frame_capture(self, join=False):
+        self._process = Process(
+            target=self._start, args=(self.image_writer, self.fps_writer), daemon=True
+        )
+        self._process.start()
+        if join:
+            self._process.join()
+
+    @property
+    def latest_frame(self):
+        return self.image_reader.recv()
+
+    @property
+    def current_fps(self):
+        return self.fps_reader.recv()
+
+    @property
+    def session_writer_path(self):
+        return ""
+
+    def close(self):
+        try:
+            self._process.terminate()
+            while self._process.is_alive():
+                # wait for process to die.
+                time.sleep(0.1)
+        except:
+            logger.error("Printing traceback")
+            traceback.print_exc()
+        finally:
+            logger.info("Closed Camera {}".format(self._config.webcam_id))
 
 
-class WebcamConfig(BaseModel):
-    webcam_id: int = 0
-    exposure: int = -6
-    resolution_width: int = 800
-    resolution_height: int = 600
-    save_video: bool = True
-    fourcc: str = "MP4V"
-    # fourcc: str = "MJPG"
-    base_save_video_dir = _get_home_dir()
+class CamThreadHandler:
+    def __init__(self, config: WebcamConfig):
+        self._config = config
+        self.is_capturing_frames = (False,)
+        self._thread: threading.Thread = None
+        c = VideoCaptureFactory()
+        self._video_capture = c.create(WebcamConfig(webcam_id=self._config.webcam_id))
+        self._fc = FrameCapture(
+            video_capture=self._video_capture,
+            save_video=config.save_video,
+            webcam_id=config.webcam_id,
+        )
+
+    def start_frame_capture(self, join=False):
+        self._thread = Thread(target=self._fc.run, daemon=True)
+        self._thread.start()
+        self.is_capturing_frames = True
+        if join:
+            self._thread.join()
+
+    @property
+    def latest_frame(self):
+        return self._fc.latest_frame
+
+    @property
+    def current_fps(self):
+        return self._fc.current_fps
+
+    @property
+    def session_writer_path(self):
+        return self._fc.session_writer_path
+
+    def close(self):
+        try:
+            self._fc.stop()
+            while self._thread.is_alive():
+                # wait for thread to die.
+                # TODO: use threading.Event for synchronize mainthread vs other threads
+                time.sleep(0.1)
+        except:
+            logger.error("Printing traceback")
+            traceback.print_exc()
+        finally:
+            logger.info("Closed Camera {}".format(self._config.webcam_id))
 
 
 class OpenCVCamera:
     """
-    Performant implementation of video capture against webcams
+    OpenCV Camera implementation with native threading or process handling
     """
 
-    def __init__(self, config: WebcamConfig):
+    def __init__(
+        self,
+        config: WebcamConfig,
+        as_process: bool = True,
+    ):
         self._config = config
         self._name = f"Camera {self._config.webcam_id}"
-        self._opencv_video_capture_object: cv2.VideoCapture = None
-        self._running_thread: FrameThread = None
+        if as_process:
+            self._capture_handler = CamProcessHandler(self._config)
+        else:
+            self._capture_handler = CamThreadHandler(self._config)
 
     @property
     def webcam_id_as_str(self):
@@ -45,51 +132,27 @@ class OpenCVCamera:
 
     @property
     def current_fps(self):
-        return self._running_thread.current_fps
+        return self._capture_handler.current_fps
 
     @property
     def is_capturing_frames(self):
-        if not self._running_thread:
-            logger.error("Frame Capture thread not running yet")
+        if not self._capture_handler.is_capturing_frames:
+            logger.error("Frame Capture not running yet")
             return False
 
-        return self._running_thread.is_capturing_frames
+        return self._capture_handler.is_capturing_frames
 
     @property
     def current_fps_short(self) -> str:
-        return "{:.2f}".format(self._running_thread.current_fps)
+        return "{:.2f}".format(self._capture_handler.current_fps)
 
     @property
     def latest_frame(self):
-        return self._running_thread.latest_frame
+        return self._capture_handler.latest_frame
 
     @property
     def session_writer_base_path(self):
-        return self._running_thread.session_writer_path
-
-    def connect(self):
-        if platform.system() == "Windows":
-            cap_backend = cv2.CAP_DSHOW
-        else:
-            cap_backend = cv2.CAP_ANY
-
-        self._opencv_video_capture_object = cv2.VideoCapture(
-            self._config.webcam_id, cap_backend
-        )
-        # self._apply_configuration()
-        success, image = self._opencv_video_capture_object.read()
-
-        if not success:
-            logger.error(
-                "Could not connect to a camera at port# {}".format(
-                    self._config.webcam_id
-                )
-            )
-            return success
-        logger.debug(f"Camera found at port number {self._config.webcam_id}")
-        fps_input_stream = int(self._opencv_video_capture_object.get(5))
-        logger.debug("FPS of webcam hardware/input stream: {}".format(fps_input_stream))
-        return success
+        return ""
 
     def start_frame_capture(self):
         if self.is_capturing_frames:
@@ -100,66 +163,10 @@ class OpenCVCamera:
         logger.info(
             f"Beginning frame capture thread for webcam: {self.webcam_id_as_str}"
         )
-        self._running_thread = self._create_thread()
-        self._running_thread.start()
-
-    def _create_thread(self):
-        return FrameThread(
-            webcam_id=self.webcam_id_as_str,
-            get_next_frame=self.get_next_frame,
-            save_video=self._config.save_video,
-            frame_width=self.get_frame_width(),
-            frame_height=self.get_frame_height(),
-        )
-
-    def get_frame_width(self):
-        return int(self._opencv_video_capture_object.get(3))
-
-    def get_frame_height(self):
-        return int(self._opencv_video_capture_object.get(4))
-
-    def _apply_configuration(self):
-        # set camera stream parameters
-        self._opencv_video_capture_object.set(
-            cv2.CAP_PROP_EXPOSURE, self._config.exposure
-        )
-        self._opencv_video_capture_object.set(
-            cv2.CAP_PROP_FRAME_WIDTH, self._config.resolution_width
-        )
-        self._opencv_video_capture_object.set(
-            cv2.CAP_PROP_FRAME_HEIGHT, self._config.resolution_height
-        )
-        self._opencv_video_capture_object.set(
-            cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*self._config.fourcc)
-        )
-
-    def get_next_frame(self):
-        timestamp_ns_pre_grab = time.time_ns()
-        # Why grab not read? see ->
-        # https://stackoverflow.com/questions/57716962/difference-between-video-capture-read-and
-        # -grab
-        if not self._opencv_video_capture_object.grab():
-            return FramePayload(False, None, None)
-
-        timestamp_ns_post_grab = time.time_ns()
-        timestamp_ns = (timestamp_ns_pre_grab + timestamp_ns_post_grab) / 2
-
-        success, image = self._opencv_video_capture_object.retrieve()
-        return FramePayload(success, image, timestamp_ns)
+        self._capture_handler.start_frame_capture()
 
     def stop_frame_capture(self):
         self.close()
 
     def close(self):
-        try:
-            self._running_thread.stop()
-            while self._running_thread.is_alive():
-                # wait for thread to die.
-                # TODO: use threading.Event for synchronize mainthread vs other threads
-                time.sleep(0.1)
-        except:
-            logger.error("Printing traceback")
-            traceback.print_exc()
-        finally:
-            logger.info("Closed {}".format(self._name))
-            self._opencv_video_capture_object.release()
+        self._capture_handler.close()

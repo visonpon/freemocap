@@ -1,34 +1,26 @@
-import time
+import collections
 from typing import Dict, List
+
+from src.cameras.capture.frame_payload import FramePayload
 
 
 class FPSCounter:
-    _num_frames_processed: int
-    _start_time: float
-
     def __init__(self):
-        self._start_time = 0
-        self._num_frames_processed = 0
-
-    def is_started(self):
-        return self._start_time > 0
-
-    def start(self):
-        self._start_time = time.time()
+        self._frame_timestamps = collections.deque(maxlen=500)
 
     @property
     def current_fps(self):
-        if self.elapsed() <= 0:
-            return 0
-        if self._num_frames_processed <= 0:
-            return 0
-        return self._num_frames_processed / self.elapsed()
+        current_length = len(self._frame_timestamps)
 
-    def elapsed(self):
-        return time.time() - self._start_time
+        if current_length <= 2:
+            return 0.0
 
-    def increment_frame_processed(self):
-        self._num_frames_processed += 1
+        return current_length / (
+            (self._frame_timestamps[-1] - self._frame_timestamps[0]) / 1e9
+        )
+
+    def increment(self, frame: FramePayload):
+        self._frame_timestamps.append(frame.timestamp)
 
 
 class FPSCamCounter:
@@ -43,18 +35,8 @@ class FPSCamCounter:
 
         return d
 
-    def increment_frame_processed_for(self, webcam_id):
-        self._counters[webcam_id].increment_frame_processed()
+    def increment_frame_processed_for(self, webcam_id, frame: FramePayload):
+        self._counters[webcam_id].increment(frame)
 
     def current_fps_for(self, webcam_id):
         return self._counters[webcam_id].current_fps
-
-    def start_all(self):
-        for webcam_id in self._webcam_ids:
-            self.start_for(webcam_id)
-
-    def start_for(self, webcam_id):
-        if self._counters[webcam_id].is_started():
-            return
-
-        self._counters[webcam_id].start()

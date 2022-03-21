@@ -95,7 +95,6 @@ class CVCameraManager:
     def _start_frame_capture_all_cams(self) -> Dict[str, VideoWriter]:
         d = {}
         for cv_cam in self._cv_cams:
-            cv_cam.connect()
             cv_cam.start_frame_capture()
             d[cv_cam.webcam_id_as_str] = VideoWriter()
 
@@ -109,7 +108,6 @@ class CVCameraManager:
             len(filtered_cams) == 1
         ), "The CV Cams list should only have 1 cam per webcam_id"
         cv_cam = filtered_cams[0]
-        cv_cam.connect()
         cv_cam.start_frame_capture()
         return VideoWriter()
 
